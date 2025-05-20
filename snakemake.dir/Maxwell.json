@@ -1,0 +1,63 @@
+{
+    "__default__" :
+    {
+        "nCPUs"     : 12,
+        "nodes"     : 1,
+        "memory"    : 4000,
+        "time"      : "23:59:59",
+	"partition" : "uoa-compute",
+        "name"      : "JOBNAME.{rule}.{wildcards}",
+        "output"    : "logs/{rule}.{wildcards}.out",
+        "error"     : "logs/{rule}.{wildcards}.err"
+    },
+    "split_by_celltype":
+    {
+        "nCPUs"     : 1,
+        "memory"    : 12000,
+	"time"      : "95:00:00"
+    },
+    "index_split_bams":
+    {
+        "nCPUs"      : 1,
+        "memory"     : 4000,
+	"time"       : "2:00:00"
+    },
+    "base_counter":
+    {
+        "nCPUs"      : 1,
+        "memory"     : 12000,
+	"time"       : "47:00:00"
+    },
+    "merge_base_counts":
+    {
+        "nCPUs"      : 1,
+        "memory"     : 12000,
+	"time"       : "47:00:00"
+    },
+    "variant_calls":
+    {
+        "nCPUs"      : 1,
+        "memory"     : 12000,
+	"time"       : "47:00:00"
+    },
+    "filter_calls":
+    {
+        "nCPUs"      : 1,
+        "memory"     : 8000,
+	"time"       : "34:00:00"
+    },
+    "qc_filter":
+    {
+        "nCPUs"      : 1,
+        "memory"     : 8000,
+	"time"       : "34:00:00",
+	"partition"  : "spot-compute"
+    },
+    "genotype_cells":
+    {
+        "nCPUs"      : 1,
+        "memory"     : 8000,
+	"time"       : "10:00:00",
+	"partition"  : "spot-compute"
+    }
+}

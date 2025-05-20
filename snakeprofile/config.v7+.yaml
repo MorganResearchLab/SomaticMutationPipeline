@@ -1,0 +1,12 @@
+## slurm profile for Maxwell
+executor: slurm
+jobs: 100
+latency-wait: 250
+
+default-resources:
+    slurm_partition: "uoa-compute"
+    slurm_account:   "medicine"
+    runtime: "12d"
+    mem_mb: 4000
+    cpus_per_task: 8
+    nodes: 1

@@ -1,0 +1,31 @@
+# Environment settings
+conda_env: "SComatic"
+conda_prefix: "/uoa/home/s08mm2/miniforge3/envs"  # Update this path
+
+# Paths
+src_dir: "/uoa/home/s08mm2/sharedscratch/Randolph/SomaticMutations/scripts"
+scomatic_dir: "/uoa/home/s08mm2/src/SComatic"
+ref_dir: "/uoa/scratch/shared/Morgan_Lab/common_resources/hg38/chroms"
+bam_dir: "/uoa/scratch/shared/Morgan_Lab/tcell_ageing_meta_analysis_2023/data/randolph_2021/bam"
+
+# Input files for cell type splitting
+cell_type_file: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Randolph/meta.dir/Randolph_ALL_annotations.tsv"  # Maps cell barcodes to types
+sra_metadata: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Randolph/meta.dir/sra_metadata_with_batchid.csv"    # Contains batch information
+
+# cell types comma separated list
+celltypes: "CD4T,CD8T,monocytes,B,NK,NKhighresponse,infectedmonocytes,DC,neutrophils,highlyinfected"
+
+# genome chunk size for parallel BAM splitting
+window: 5000000
+
+panel_of_normals: "/uoa/home/s08mm2/src/SComatic/PoNs/PoN.scRNAseq.hg38.tsv"
+rna_editing_sites: "/uoa/home/s08mm2/src/SComatic/RNAediting/AllEditingSites.hg38.txt"
+
+# Additional parameters for SComatic
+min_cells: 5
+min_ac_cells: 2
+min_ac_reads: 3
+max_cell_types: 6
+min_cell_types: 1
+fisher_cutoff: 0.001
+

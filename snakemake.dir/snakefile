@@ -1,0 +1,334 @@
+# Snakefile for SComatic Analysis Pipeline
+
+###### Running on Maxwell ######
+## Make sure the slurm executor plug-in is installed:
+## conda activate snakemake # assume snakemake is the name of the conda env for your pipeline
+## pip install snakemake-executor-plugin-slurm
+##
+## make sure conda env yaml files are in both the working directory and the snakemake.dir, or wherever the snakefile is located
+## conda envs can be pre-installed using:
+## snakemake --sdm conda --conda-create-envs-only -s snakemake.dir/snakefile --configfile snakemake.dir/config.yaml
+##
+## #### dry run ####
+## snakemake -s snakemake.dir/snakefile --configfile snakemake.dir/config.yaml -n --rerun-triggers mtime
+##
+## #### execute pipeline ####
+## nohup nice -19 snakemake -s snakemake.dir/snakefile --configfile snakemake.dir/config.yaml --sdm conda --profile snakeprofile --latency-wait 650 --slurm-init-seconds-before-status-checks 500 -j 250  --rerun-triggers mtime  --rerun-incomplete&
+##
+##
+## monitor pipeline progress with:
+## tail -f -n20 nohup.out
+##
+##
+##
+####
+
+configfile: "config.yaml"
+
+import pandas as pd
+import os
+from pathlib import Path
+import glob
+
+# Generate chromosome list (1-22)
+CHROMS = [f"chr{i}" for i in range(1, 23)]
+CELL_TYPES = ["CD4T", "CD8T", "NK", "B", "monocytes", "highlyinfected",
+               "infectedmonocytes", "NKhighresponse", "neutrophils", "DC"]
+
+##CELL_TYPES = ["CD4T", "CD8T"]
+
+def get_samples_from_bams():
+    bam_files = glob.glob(os.path.join(config["bam_dir"], "*.bam"))
+    # Strip off both .bam and any cell type suffixes
+    samples = [os.path.basename(bam).replace(".bam", "") for bam in bam_files]
+    samples = list(set(samples))  # Remove duplicates
+    if not samples:
+        raise ValueError(f"No .bam files found in {config['bam_dir']}")
+    return(samples)
+
+# Get sample list
+SAMPLES = get_samples_from_bams()
+#SAMPLES = ["SRR13194389", "SRR13194390"]
+
+rule all:
+    input:
+        expand("results/genotyped/{sample}_{celltype}_{chrom}.single_cell_genotype.tsv",
+               sample=SAMPLES,
+               celltype=CELL_TYPES,
+               chrom=CHROMS)
+
+# Split BAM files by cell type and chromosome
+rule split_by_celltype:
+    input:
+        bam = os.path.join(config["bam_dir"], "{sample}.bam")
+    output:
+        split_bams = expand("results/split_bams/{{sample}}/{{sample}}_{celltype}_{{chrom}}.bam",
+                          celltype=CELL_TYPES)
+    params:
+        outdir = "results/split_bams/{sample}",
+        script = "scripts/split_by_celltype-parallel.py",
+        meta = config["cell_type_file"],
+        sra_meta = config["sra_metadata"],
+        celltypes = config["celltypes"],
+        window = config["window"]
+    resources:
+        mem_mb = 12000,
+        runtime = "12d",
+        partition = "uoa-compute",
+        cpus_per_task = 8,
+        cpus = 8
+    conda:
+        "envs/scomatic.yaml"
+    log:
+        "logs/split_bams/{sample}_{chrom}.log"
+    shell:
+        """
+        set +u; conda activate SComatic; set -u
+        
+        mkdir -p {params.outdir}
+        
+        python {params.script} \
+            --bamfile {input.bam} \
+            --outdir {params.outdir} \
+            --chrom {wildcards.chrom} \
+            --sra_meta {params.sra_meta} \
+	    --threads 8 \
+            --celltypes {params.celltypes} \
+            --metafile {params.meta} \
+            --chunk_size {params.window} \
+            --log {log};
+        
+        set +u; conda deactivate; set -u
+        """
+
+rule all_split_bams:
+    input:
+        expand("results/split_bams/{sample}/{sample}_{celltype}_{chrom}.bam",
+               sample=SAMPLES,
+               celltype=CELL_TYPES,
+               chrom=CHROMS)
+
+# Index split BAM files
+rule index_split_bams:
+    input:
+        bam = "results/split_bams/{sample}/{sample}_{celltype}_{chrom}.bam"
+    output:
+        bai = "results/split_bams/{sample}/{sample}_{celltype}_{chrom}.bam.bai"
+    resources:
+        mem_mb = 4000,
+        runtime = 180,
+        partition = "uoa-compute",
+        cpus = 1
+    conda:
+        "envs/scomatic.yaml"
+    log:
+        "logs/index_bam/{sample}_{celltype}_{chrom}.log"
+    shell:
+        """
+        samtools index {input.bam} {output.bai} 2> {log}
+        """
+
+# Base counter now requires both BAM and index
+rule base_counter:
+    input:
+        bam = "results/split_bams/{sample}/{sample}_{celltype}_{chrom}.bam",
+        bai = "results/split_bams/{sample}/{sample}_{celltype}_{chrom}.bam.bai",
+        env = "envs/scomatic.yaml"
+    output:
+        counts = "results/base_counts/{sample}/{chrom}/{sample}_{celltype}_{chrom}.tsv"
+    params:
+        temp_dir = "results/temp/{sample}_{chrom}_{celltype}",
+        fasta = lambda wildcards: f"{config['ref_dir']}/{wildcards.chrom}.fa.gz",
+        sco_chrom = lambda wildcards: f"{wildcards.chrom}",
+        countdir = "results/base_counts/{sample}/{chrom}/"
+    resources:
+        mem_mb = 12000,
+        runtime = 2820,
+        partition = "uoa-compute",
+        cpus = 1
+    conda:
+        "envs/scomatic.yaml"
+    log:
+        "logs/base_counter/{sample}_{chrom}_{celltype}.log"
+    shell:
+        """
+        set +u; conda activate SComatic; set -u
+
+	touch {output.counts}
+        touch {params.countdir}
+        
+        mkdir -p {params.temp_dir}
+        python {config[scomatic_dir]}/scripts/BaseCellCounter/BaseCellCounter.py \
+            --bam {input.bam} \
+            --ref {params.fasta} \
+            --chrom {params.sco_chrom} \
+            --out_folder {params.countdir} \
+            --min_bq 30 \
+            --tmp_dir {params.temp_dir} \
+            --nprocs 1 \
+            2> {log}
+        
+        set +u; conda deactivate; set -u
+        rm -rf {params.temp_dir}
+        """
+
+# Merge base counts for each sample
+rule merge_base_counts:
+    input:
+        counts = expand("results/base_counts/{{sample}}/{{chrom}}/{{sample}}_{celltype}_{{chrom}}.tsv",
+                        celltype=CELL_TYPES)
+    output:
+        merged = "results/merged_counts/{sample}_{chrom}_AllCellTypes.tsv"
+    params:
+        tsv_dir = "results/base_counts/{sample}/{chrom}/"
+    resources:
+        mem_mb = 12000,
+        runtime = 2820,
+        partition = "uoa-compute",
+        cpus = 1
+    conda:
+        "envs/scomatic.yaml"
+    log:
+        "logs/merge_counts/{sample}_{chrom}.log"
+    shell:
+        """
+        set +u; conda activate SComatic; set -u
+        
+        python {config[scomatic_dir]}/scripts/MergeCounts/MergeBaseCellCounts.py \
+            --tsv_folder {params.tsv_dir} \
+            --outfile {output.merged} \
+            2> {log}
+            
+        set +u; conda deactivate; set -u
+        """
+
+# Variant calling
+rule variant_calls:
+    input:
+        counts = "results/merged_counts/{sample}_{chrom}_AllCellTypes.tsv"
+    output:
+        calls = "results/variant_calls/{sample}_{chrom}.calling.step1.tsv"
+    params:
+        ref = lambda wildcards: f"{config['ref_dir']}/{wildcards.chrom}.fa.gz",
+        outfile = "results/variant_calls/{sample}_{chrom}"
+    resources:
+        mem_mb = 12000,
+        runtime = 2820,
+        partition = "uoa-compute",
+        cpus = 1
+    conda:
+        "envs/scomatic.yaml"
+    log:
+        "logs/variant_calls/{sample}_{chrom}.log"
+    shell:
+        """
+        set +u; conda activate SComatic; set -u
+        touch {output.calls}
+        
+        python {config[scomatic_dir]}/scripts/BaseCellCalling/BaseCellCalling.step1.py \
+            --infile {input.counts} \
+            --outfile {params.outfile} \
+            --ref {params.ref} \
+            --min_cells 5 \
+            --min_ac_cells 2 \
+            --min_ac_reads 3 \
+            --max_cell_types 6 \
+            --min_cell_types 1 \
+            --fisher_cutoff 0.001 \
+            2> {log}
+            
+        set +u; conda deactivate; set -u
+        """
+
+# Filter variant calls
+rule filter_calls:
+    input:
+        vcf = "results/variant_calls/{sample}_{chrom}.calling.step1.tsv"
+    output:
+        filtered = "results/filtered_calls/{sample}_{chrom}.calling.step2.tsv"
+    params:
+        pon = config["panel_of_normals"],
+        editing = config["rna_editing_sites"],
+        filt_out = "results/filtered_calls/{sample}_{chrom}"
+    resources:
+        mem_mb = 8000,
+        runtime = 2040,
+        partition = "spot-compute",
+        cpus = 1
+    conda:
+        "envs/scomatic.yaml"
+    log:
+        "logs/filter_calls/{sample}_{chrom}.log"
+    shell:
+        """
+        python {config[scomatic_dir]}/scripts/BaseCellCalling/BaseCellCalling.step2.py \
+            --infile {input.vcf} \
+            --outfile {params.filt_out} \
+            --pon {params.pon} \
+            --editing {params.editing} \
+            2> {log}
+        """
+
+## QC filtering of variants
+## If contigs have chr or Chr then use from shell command:
+## -b <(cat {config[scomatic_dir]}/bed_files_of_interest/UCSC.k100_umap.without.repeatmasker.bed ) |
+## Otherwise, if no chr or Chr:
+## -b <(cat {config[scomatic_dir]}/bed_files_of_interest/UCSC.k100_umap.without.repeatmasker.bed | sed 's/chr//g' ) |
+
+rule qc_filter:
+    input:
+        calls = "results/filtered_calls/{sample}_{chrom}.calling.step2.tsv"
+    output:
+        filtered = "results/qc_filtered/{sample}_{chrom}.filtered.vcf"
+    conda:
+        "envs/bedtools.yaml"
+    log:
+        "logs/qc_filter/{sample}_{chrom}.log"
+    resources:
+        mem_mb = 8000,
+        runtime = 2040,
+        partition = "spot-compute",
+        cpus = 1
+    shell:
+        """
+        bedtools intersect -header \
+            -a {input.calls} \
+            -b <(cat {config[scomatic_dir]}/bed_files_of_interest/UCSC.k100_umap.without.repeatmasker.bed ) |\
+            awk -F "\t" '$1 ~ /^#/ || $6 == ""' > {output.filtered} 2> {log}
+        """
+
+# Genotype cells for filtered variants
+rule genotype_cells:
+    input:
+        vcf = "results/qc_filtered/{sample}_{chrom}.filtered.vcf",
+        bam = "results/split_bams/{sample}/{sample}_{celltype}_{chrom}.bam"
+    output:
+        genotypes = "results/genotyped/{sample}_{celltype}_{chrom}.single_cell_genotype.tsv"
+    params:
+        temp_dir = "results/temp/genotype_{sample}_{celltype}_{chrom}",
+        ref = lambda wildcards: f"{config['ref_dir']}/{wildcards.chrom}.fa.gz"
+    resources:
+        mem_mb = 8000,
+        runtime = 600,
+        partition = "spot-compute",
+        cpus = 1
+    conda:
+        "envs/scomatic.yaml"
+    log:
+        "logs/genotype_cells/{sample}_{celltype}_{chrom}.log"
+    shell:
+        """
+        set +u; conda activate SComatic; set -u
+
+        mkdir -p {params.temp_dir}
+        python {config[scomatic_dir]}/scripts/SingleCellGenotype/SingleCellGenotype.py \
+            --bam {input.bam} \
+            --infile {input.vcf} \
+            --nprocs 1 \
+            --meta {config[cell_type_file]} \
+            --outfile {output.genotypes} \
+            --tmp_dir {params.temp_dir} \
+            --ref {params.ref} \
+            2> {log}
+        rm -rf {params.temp_dir}
+        """
