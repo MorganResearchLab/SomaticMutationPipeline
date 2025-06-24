@@ -32,3 +32,5 @@ paths:
 ## Usage
 
 ## FAQs - Frequently asked questions
+
+## Contacts
