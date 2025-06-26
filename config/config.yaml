@@ -1,5 +1,5 @@
 paths:
-  scomatic_dir: "/uoa/home/r04mr23/sharedscratch/trial/scomatic/SComatic"
+  scomatic_dir: "/uoa/scratch/shared/Morgan_Lab/common_resources/SComatic"
   ref_dir: "/uoa/scratch/shared/Morgan_Lab/common_resources/hg38/chroms"
   bam_dir: "/uoa/home/r04mr23/sharedscratch/trial/scomatic/data/bam"
   scripts_dir: "/uoa/home/r04mr23/sharedscratch/trial/scomatic/SomaticMutationPipeline/scripts"
@@ -8,9 +8,9 @@ inputs:
   cell_type_annotations: "/uoa/scratch/shared/Morgan_Lab/tcell_ageing_meta_analysis_2023/data/soskic_2022/metadata/cell_metadata/cell_metadata_w_cell_type.csv"
   cell_type_column: "Cell_culture_batch"
   sra_metadata: "/uoa/scratch/shared/Morgan_Lab/tcell_ageing_meta_analysis_2023/data/soskic_2022/metadata/cell_metadata/cell_metadata_w_cell_type.csv"
-  panel_of_normals: "/uoa/home/r04mr23/sharedscratch/trial/scomatic/SComatic/PoNs/PoN.scRNAseq.hg38.tsv"
-  rna_editing_sites: "/uoa/home/r04mr23/sharedscratch/trial/scomatic/SComatic/RNAediting/AllEditingSites.hg38.txt"
-  umap_bed_file: "/uoa/home/r04mr23/sharedscratch/trial/scomatic/SComatic/bed_files_of_interest/UCSC.k100_umap.without.repeatmasker.bed"
+  panel_of_normals: "/uoa/scratch/shared/Morgan_Lab/common_resources/SComatic/PoNs/PoN.scRNAseq.hg38.tsv"
+  rna_editing_sites: "/uoa/scratch/shared/Morgan_Lab/common_resources/SComatic/RNAediting/AllEditingSites.hg38.txt"
+  umap_bed_file: "/uoa/scratch/shared/Morgan_Lab/common_resources/SComatic/bed_files_of_interest/UCSC.k100_umap.without.repeatmasker.bed"
   
 params:
   split_bams:
