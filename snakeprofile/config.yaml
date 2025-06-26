@@ -1,0 +1,8 @@
+cluster: "sbatch --partition={resources.partition} --cpus-per-task={threads} --mem={resources.mem_mb}"
+
+default-resources:
+  - partition="uoa-compute"
+  - mem_mb=8000
+  - runtime=2040
+
+restart-times: 1
