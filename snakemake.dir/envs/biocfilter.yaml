@@ -1,0 +1,50 @@
+name: biocfilter
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  # Core R installation - use latest available
+  - r-base=4.5.1
+
+  # System libraries needed for R package compilation
+  - libxml2
+  - libcurl
+  - openssl
+  - zlib
+  - bzip2
+  - xz
+  - pcre2
+  - icu
+  - libffi
+  - libiconv
+  - gsl
+  - openblas
+  - lapack
+
+  # OpenMP libraries (critical for compilation)
+  - llvm-openmp
+  - libgomp
+  - _openmp_mutex
+  
+  # Compilation tools
+  - gcc_linux-64
+  - gxx_linux-64
+  - gfortran_linux-64
+  - make
+  - pkg-config
+  - cmake
+  - autoconf
+  - automake
+  - libtool
+  
+  # Graphics libraries (use libjpeg-turbo instead of jpeg)
+  - cairo
+  - pango
+  - harfbuzz
+  - fribidi
+  - fontconfig
+  - freetype
+  - libpng
+  - libtiff
+  - libjpeg-turbo
+  

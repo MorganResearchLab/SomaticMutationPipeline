@@ -1,0 +1,2 @@
+Using profile snakeprofile for setting default command line arguments.
+Error: profile given but no config.yaml found. Profile has to be given as either absolute path, relative path or name of a directory available in either /etc/xdg/snakemake or /uoa/home/s08mm2/.config/snakemake.

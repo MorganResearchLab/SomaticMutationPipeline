@@ -1,3 +1,4 @@
+name: SComatic
 channels:
   - bioconda
   - conda-forge
@@ -126,3 +127,4 @@ dependencies:
       - python-dateutil==2.9.0.post0
       - scipy==1.7.3
       - six==1.16.0
+prefix: /uoa/home/s08mm2/miniforge3/envs/SComatic
