@@ -1,8 +1,12 @@
-cluster: "sbatch --partition={resources.partition} --cpus-per-task={threads} --mem={resources.mem_mb}"
+## slurm profile for Maxwell
+executor: slurm
+jobs: 100
+latency-wait: 250
 
 default-resources:
-  - partition="uoa-compute"
-  - mem_mb=8000
-  - runtime=2040
-
-restart-times: 1
+    slurm_partition: "uoa-compute"
+    slurm_account:   "medicine"
+    runtime: "12d"
+    mem_mb: 4000
+    cpus_per_task: 1
+    nodes: 1
