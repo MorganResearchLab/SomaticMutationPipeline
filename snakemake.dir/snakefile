@@ -1,6 +1,6 @@
 # Snakefile for SComatic Analysis Pipeline
 
-###### Running on Maxwell ######
+###### Running on HPC ######
 ## Make sure the slurm executor plug-in is installed:
 ## conda activate snakemake # assume snakemake is the name of the conda env for your pipeline
 ## pip install snakemake-executor-plugin-slurm

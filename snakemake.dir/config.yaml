@@ -1,31 +1,31 @@
 # Environment settings
 conda_env: "SComatic"
-conda_prefix: "/uoa/home/s08mm2/miniforge3/envs"  # Update this path
+conda_prefix: ""  # Update all paths
 
 # Paths
-src_dir: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Parse_PBMC/scripts"
-scomatic_dir: "/uoa/home/s08mm2/src/SComatic"
-ref_dir: "/uoa/scratch/shared/Morgan_Lab/common_resources/hg38/chroms"
-bam_dir: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Parse_PBMC/bam.dir"
+src_dir: ""
+scomatic_dir: ""
+ref_dir: ""
+bam_dir: ""
 
 # Input files for cell type splitting
-cell_type_file: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Parse_PBMC/meta.dir/ParsePBMC_scmeta_label.tsv"  # Maps cell barcodes to types
-sra_metadata: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Parse_PBMC/meta.dir/parse_sample_meta.csv"    # Contains batch information
+cell_type_file: ""  # Maps cell barcodes to types
+sra_metadata: ""    # Contains batch information
 
 # batch information
-batch_position: "None"
-batch_column: "batch"
+batch_position: ""
+batch_column: ""
 
-# cell types comma separated list
-celltypes: "B,CD4,CD4TCM,CD8,CD8Effector,CD8TCM,CD8TEM,DC,Monocytes,NaiveCD4,NaiveCD8,NR4A1CD4,NR4A1CD8"
+# cell types comma separated list - NO SPACES
+celltypes: ""
 
-# genome chunk size for parallel BAM splitting
-window: 5000000
+# genome chunk size for parallel BAM splitting - integer
+window: 0
 
-panel_of_normals: "/uoa/home/s08mm2/src/SComatic/PoNs/PoN.scRNAseq.hg38.tsv"
-rna_editing_sites: "/uoa/home/s08mm2/src/SComatic/RNAediting/AllEditingSites.hg38.txt"
+panel_of_normals: "/path/to/SComatic/PoNs/PoN.scRNAseq.hg38.tsv"
+rna_editing_sites: "/path/to/SComatic/RNAediting/AllEditingSites.hg38.txt"
 
-# Additional parameters for SComatic
+# Additional parameters for SComatic - numeric
 min_cells: 5
 min_ac_cells: 2
 min_ac_reads: 3
