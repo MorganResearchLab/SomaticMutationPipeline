@@ -4,7 +4,7 @@
 options(repos = c(CRAN = "https://cloud.r-project.org/"))
 
 # Install CRAN packages first
-cran_packages <- c("optparse", "stringr", "reshape2", "dplyr", "devtools")
+cran_packages <- c("optparse", "stringr", "reshape2", "dplyr", "devtools", "tidyr")
 
 cat("Installing CRAN packages...\n")
 for (pkg in cran_packages) {
@@ -32,6 +32,7 @@ bioc_packages <- c(
     "GenomicFeatures", 
     "GenomicRanges",
     "BSgenome.Hsapiens.UCSC.hg38",
+    "SNPlocs.Hsapiens.dbSNP155.GRCh38",
     "biomaRt",
     "TxDb.Hsapiens.UCSC.hg38.knownGene",
     "Biostrings",

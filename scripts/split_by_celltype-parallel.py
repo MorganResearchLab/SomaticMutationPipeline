@@ -16,7 +16,7 @@ def setup_logging(log_file, log_level=logging.INFO):
     else:
         logging.basicConfig(format=log_format, level=log_level)
 
-def process_region(region, bamfile, outdir, metadata, cell_types, batch_id, bam_name, chr_contigs, chrom_str, log_file=None):
+def process_region(region, bamfile, outdir, metadata, cell_types, batch_id, batch_position, bam_name, chr_contigs, chrom_str, log_file=None):
     """Process a specific genomic region"""
     # Set up logging for this process
     if log_file:
@@ -60,8 +60,16 @@ def process_region(region, bamfile, outdir, metadata, cell_types, batch_id, bam_
         try:
             cellbarcode = x.get_tag("CB")
             summ_dict["Valid"] += 1
-            cb_id = batch_id + "_" + cellbarcode
-            
+
+            if batch_position == "prefix":
+                cb_id = batch_id + "_" + cellbarcode
+            elif batch_position == "suffix":
+                cb_id = cellbarcode + "_" + batch_id
+            elif batch_position == "None":
+                cb_id = cellbarcode
+            else:
+                raise IOError(f"Batch position argument {batch_position} not recognised")
+
             if not cellbarcode.endswith("-1"):
                 cb_id = cb_id.rstrip("-1")
                 
@@ -69,6 +77,7 @@ def process_region(region, bamfile, outdir, metadata, cell_types, batch_id, bam_
             if metadata['Index'].isin([cb_id]).any():
                 summ_dict["CB_matched"] += 1
                 celltype = metadata.loc[metadata['Index'] == cb_id, 'Cell_type'].values[0]
+
                 if count % logging_interval == 0:
                     elapsed = time.time() - start_time
                     rate = count / elapsed if elapsed > 0 else 0
@@ -139,6 +148,9 @@ def main():
     parser.add_argument("--celltypes", help="Comma-separated list of cell type annotations to split reads into")
     parser.add_argument("--threads", help="Threads to speed up cell type BAM splitting", default=1, type=int)
     parser.add_argument("--sra_meta", default=None, help="Meta data that maps SRA ID to batch ID")
+    parser.add_argument("--batch_column", default=None, help="Column of meta data containing batch information")
+    parser.add_argument("--batch_pos", choices=["prefix", "suffix", "None"], nargs="?",
+                        help="Where to place the batch ID on the CB", default="suffix", const="suffix")
     parser.add_argument("--log", default="stdout", help="logfile")
     # Add new arguments
     parser.add_argument("--chunk_size", default=10000000, type=int, 
@@ -210,7 +222,10 @@ def main():
         df = pd.read_csv(args.sra_meta)
         
         filename_column = df.columns[0]
-        batch_id_column = df.columns[-1]
+        if args.batch_column is not None:
+            batch_id_column = args.batch_column
+        else:           
+            batch_id_column = df.columns[-1]
         
         bam_name = args.bamfile.split('/')[-1].split('.')[0]
         matching_row = df[df[filename_column] == bam_name]
@@ -265,6 +280,7 @@ def main():
                 metadata=metadata,
                 cell_types=cell_types,
                 batch_id=batch_id,
+                batch_position=args.batch_pos,
                 bam_name=bam_name,
                 chr_contigs=chr_contigs,
                 chrom_str=chrom_str,

@@ -13,7 +13,7 @@
 ## snakemake -s snakemake.dir/snakefile --configfile snakemake.dir/config.yaml -n --rerun-triggers mtime
 ##
 ## #### execute pipeline ####
-## nohup nice -19 snakemake -s snakemake.dir/snakefile --configfile snakemake.dir/config.yaml --sdm conda --profile snakeprofile --latency-wait 650 --slurm-init-seconds-before-status-checks 500 -j 250  --rerun-triggers mtime  --rerun-incomplete&
+## nohup nice -19 snakemake -s snakemake.dir/snakefile --configfile snakemake.dir/config.yaml --sdm conda --profile snakeprofile --latency-wait 650 --slurm-init-seconds-before-status-checks 500 -j 25  --rerun-triggers mtime  --rerun-incomplete&
 ##
 ##
 ## monitor pipeline progress with:
@@ -32,10 +32,7 @@ import glob
 
 # Generate chromosome list (1-22)
 CHROMS = [f"chr{i}" for i in range(1, 23)]
-CELL_TYPES = ["CD4T", "CD8T", "NK", "B", "monocytes", "highlyinfected",
-               "infectedmonocytes", "NKhighresponse", "neutrophils", "DC"]
-
-##CELL_TYPES = ["CD4T", "CD8T"]
+CELL_TYPES = config["celltypes"].split(",")
 
 def get_samples_from_bams():
     bam_files = glob.glob(os.path.join(config["bam_dir"], "*.bam"))
@@ -47,8 +44,8 @@ def get_samples_from_bams():
     return(samples)
 
 # Get sample list
-SAMPLES = get_samples_from_bams()[:3]
-#SAMPLES = ["SRR13194389", "SRR13194390"]
+SAMPLES = get_samples_from_bams()
+#SAMPLES = ["ParseExp1617"] # there is only one Parse BAM file
 
 rule all:
     input:
@@ -76,7 +73,9 @@ rule split_by_celltype:
         meta = config["cell_type_file"],
         sra_meta = config["sra_metadata"],
         celltypes = config["celltypes"],
-        window = config["window"]
+        window = config["window"],
+        batch_col = config["batch_column"],
+        batch_pos = config["batch_position"]
     resources:
         mem_mb = 12000,
         runtime = "12d",
@@ -88,9 +87,7 @@ rule split_by_celltype:
     log:
         "logs/split_bams/{sample}_{chrom}.log"
     shell:
-        """
-        set +u; conda activate SComatic; set -u
-        
+        """        
         mkdir -p {params.outdir}
         
         python {params.script} \
@@ -98,13 +95,13 @@ rule split_by_celltype:
             --outdir {params.outdir} \
             --chrom {wildcards.chrom} \
             --sra_meta {params.sra_meta} \
+            --batch_pos {params.batch_pos} \
+            --batch_column {params.batch_col} \
 	    --threads 8 \
             --celltypes {params.celltypes} \
             --metafile {params.meta} \
             --chunk_size {params.window} \
             --log {log};
-        
-        set +u; conda deactivate; set -u
         """
 
 rule all_split_bams:
@@ -138,8 +135,7 @@ rule index_split_bams:
 rule base_counter:
     input:
         bam = "results/split_bams/{sample}/{sample}_{celltype}_{chrom}.bam",
-        bai = "results/split_bams/{sample}/{sample}_{celltype}_{chrom}.bam.bai",
-        env = "envs/scomatic.yaml"
+        bai = "results/split_bams/{sample}/{sample}_{celltype}_{chrom}.bam.bai"
     output:
         counts = "results/base_counts/{sample}/{chrom}/{sample}_{celltype}_{chrom}.tsv"
     params:
@@ -158,8 +154,6 @@ rule base_counter:
         "logs/base_counter/{sample}_{chrom}_{celltype}.log"
     shell:
         """
-        set +u; conda activate SComatic; set -u
-
 	touch {output.counts}
         touch {params.countdir}
         
@@ -174,7 +168,6 @@ rule base_counter:
             --nprocs 1 \
             2> {log}
         
-        set +u; conda deactivate; set -u
         rm -rf {params.temp_dir}
         """
 
@@ -197,15 +190,11 @@ rule merge_base_counts:
     log:
         "logs/merge_counts/{sample}_{chrom}.log"
     shell:
-        """
-        set +u; conda activate SComatic; set -u
-        
+        """        
         python {config[scomatic_dir]}/scripts/MergeCounts/MergeBaseCellCounts.py \
             --tsv_folder {params.tsv_dir} \
             --outfile {output.merged} \
             2> {log}
-            
-        set +u; conda deactivate; set -u
         """
 
 # Variant calling
@@ -228,7 +217,6 @@ rule variant_calls:
         "logs/variant_calls/{sample}_{chrom}.log"
     shell:
         """
-        set +u; conda activate SComatic; set -u
         touch {output.calls}
         
         python {config[scomatic_dir]}/scripts/BaseCellCalling/BaseCellCalling.step1.py \
@@ -242,8 +230,6 @@ rule variant_calls:
             --min_cell_types 1 \
             --fisher_cutoff 0.001 \
             2> {log}
-            
-        set +u; conda deactivate; set -u
         """
 
 # Filter variant calls
@@ -324,8 +310,6 @@ rule genotype_cells:
         "logs/genotype_cells/{sample}_{celltype}_{chrom}.log"
     shell:
         """
-        set +u; conda activate SComatic; set -u
-
         mkdir -p {params.temp_dir}
         python {config[scomatic_dir]}/scripts/SingleCellGenotype/SingleCellGenotype.py \
             --bam {input.bam} \
@@ -360,9 +344,7 @@ rule setup_biocfilter_env:
 
 rule filter_germline:
     input:
-        snps = expand("results/genotyped/{sample}_{celltype}_{chrom}.single_cell_genotype.tsv",
-                      sample=SAMPLES,
-		      celltype=CELL_TYPES,
+        snps = expand("results/genotyped/{{sample}}_{{celltype}}_{chrom}.single_cell_genotype.tsv",
 		      chrom=CHROMS),
         bioc = "envs/biocfilter_setup_complete"
     output:
@@ -372,7 +354,7 @@ rule filter_germline:
         indir = "results/genotyped/",
         pattern = lambda wildcards: f"{wildcards.sample}_{wildcards.celltype}"
     resources:
-        mem_mb = 20000,
+        mem_mb = 32000,
         runtime = "1d",
         partition = "uoa-compute",
         cpus = 1
@@ -382,8 +364,11 @@ rule filter_germline:
         "logs/germline/{sample}_{celltype}_not_germline.log"
     shell:
         """
+        touch {output.germline}
+
         Rscript {params.rscript} --in_path {params.indir} \
-            --pattern {params.pattern} \
+            --sample {wildcards.sample} \
+            --celltype {wildcards.celltype} \
             --output {output.germline} \
             2> {log}
         """

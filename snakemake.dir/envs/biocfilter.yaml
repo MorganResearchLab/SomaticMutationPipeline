@@ -5,7 +5,7 @@ channels:
 dependencies:
   # Core R installation - use latest available
   - r-base=4.5.1
-
+  
   # System libraries needed for R package compilation
   - libxml2
   - libcurl

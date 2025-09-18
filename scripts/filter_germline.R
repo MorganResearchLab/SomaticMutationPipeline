@@ -5,7 +5,6 @@ suppressPackageStartupMessages({
 library(dplyr)
 library(VariantAnnotation)
 library(GenomicFeatures)
-library(reshape2)
 library(GenomicRanges)
 library(BSgenome.Hsapiens.UCSC.hg38)
 library(org.Hs.eg.db)
@@ -21,18 +20,24 @@ parser <- OptionParser()
 parser <- add_option(parser, c("--in_path"), type="character",
                      help="Directory containing genotype files")
 
-parser <- add_option(parser, c("--pattern"), type="character",
-                     help="Regex pattern for sample-specific genotypes")
+parser <- add_option(parser, c("--sample"), type="character",
+                     help="Sample ID to search on")
+
+parser <- add_option(parser, c("--celltype"), type="character",
+                     help="Cell type ID to search on")
 
 parser <- add_option(parser, c("--output"), type="character",
                      help="Output file prefix of germline variants")
 
 opt <- parse_args(parser)
 
+# file latency problems on Maxwell so add a quick file inspection step.
+system(paste0("ls -ls", opt$output))
+
 # add gene symbols to this
 txdb.hg38 <- TxDb.Hsapiens.UCSC.hg38.knownGene
 
-in.files <- list.files(opt$in_path, pattern=opt$pattern, full.names=TRUE)
+in.files <- list.files(opt$in_path, pattern=paste0(opt$sample, "_", opt$celltype), full.names=TRUE)
 in.df.list <- list()
 
 for(x in seq_along(in.files)){
@@ -111,7 +116,6 @@ check_strand_consistency <- function(gr) {
 
 # check the strand of all somatic mutations
 result <- check_strand_consistency(not.germline)
-print(result$summary)
 
 
 standardize_variant_strands <- function(gr, target_strand = '+') {

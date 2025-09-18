@@ -3,17 +3,21 @@ conda_env: "SComatic"
 conda_prefix: "/uoa/home/s08mm2/miniforge3/envs"  # Update this path
 
 # Paths
-src_dir: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Randolph/scripts"
+src_dir: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Parse_PBMC/scripts"
 scomatic_dir: "/uoa/home/s08mm2/src/SComatic"
 ref_dir: "/uoa/scratch/shared/Morgan_Lab/common_resources/hg38/chroms"
-bam_dir: "/uoa/scratch/shared/Morgan_Lab/tcell_ageing_meta_analysis_2023/data/randolph_2021/bam"
+bam_dir: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Parse_PBMC/bam.dir"
 
 # Input files for cell type splitting
-cell_type_file: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Randolph/meta.dir/Randolph_ALL_annotations.tsv"  # Maps cell barcodes to types
-sra_metadata: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Randolph/meta.dir/sra_metadata_with_batchid.csv"    # Contains batch information
+cell_type_file: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Parse_PBMC/meta.dir/ParsePBMC_scmeta_label.tsv"  # Maps cell barcodes to types
+sra_metadata: "/uoa/home/s08mm2/sharedscratch/SomaticMutations/Parse_PBMC/meta.dir/parse_sample_meta.csv"    # Contains batch information
+
+# batch information
+batch_position: "None"
+batch_column: "batch"
 
 # cell types comma separated list
-celltypes: "CD4T,CD8T,monocytes,B,NK,NKhighresponse,infectedmonocytes,DC,neutrophils,highlyinfected"
+celltypes: "B,CD4,CD4TCM,CD8,CD8Effector,CD8TCM,CD8TEM,DC,Monocytes,NaiveCD4,NaiveCD8,NR4A1CD4,NR4A1CD8"
 
 # genome chunk size for parallel BAM splitting
 window: 5000000
