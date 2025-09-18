@@ -137,17 +137,17 @@ This file contains resource specifications for each pipeline step. You may need 
 ```json
 {
     "split_by_celltype": {
-            "memory": 12000,      # Memory in MB
-	            "time": "95:00:00",   # Time limit
-		            "nCPUs": 8            # CPU cores
-			        },
-				    "base_counter": {
-				            "memory": 12000,
-					            "time": "47:00:00"
-						        }
-							    // ... other rules
-							    }
-							    ```
+	"memory": 12000,      # Memory in MB
+	"time": "95:00:00",   # Time limit
+	"nCPUs": 8            # CPU cores
+},
+    "base_counter": {
+        "memory": 12000,
+		"time": "47:00:00"
+},
+    // ... other rules
+}
+```
 
 ## Input Data Requirements
 
