@@ -123,12 +123,12 @@ latency-wait: 250           # Wait time for file system
 
 default-resources:
     slurm_partition: "your-partition"  # Your SLURM partition
-        slurm_account: "your-account"      # Your SLURM account
-	    runtime: "12d"                     # Default job runtime
-	        mem_mb: 4000                      # Default memory
-		    cpus_per_task: 1                  # Default CPUs
-		        nodes: 1                          # Default nodes
-			```
+    slurm_account: "your-account"      # Your SLURM account
+	runtime: "12d"                     # Default job runtime
+	mem_mb: 4000                      # Default memory
+	cpus_per_task: 1                  # Default CPUs
+	nodes: 1                          # Default nodes
+```
 
 ### Job-Specific Resources: `snakemake.dir/Maxwell.json`
 
