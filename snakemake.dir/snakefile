@@ -32,6 +32,7 @@ import glob
 
 # Generate chromosome list (1-22)
 CHROMS = [f"chr{i}" for i in range(1, 23)]
+CHROMS.append("chrM")
 CELL_TYPES = config["celltypes"].split(",")
 
 def get_samples_from_bams():
