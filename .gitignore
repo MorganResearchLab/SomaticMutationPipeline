@@ -178,3 +178,6 @@ cython_debug/
 
 results/
 .snakemake/
+# macOS metadata (external drives)
+.DS_Store
+._*

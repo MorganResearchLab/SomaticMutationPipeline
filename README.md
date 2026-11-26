@@ -4,11 +4,32 @@ A comprehensive Snakemake pipeline for calling somatic mutations from single-cel
 ## Overview
 This pipeline processes single-cell RNA-seq BAM files to identify somatic mutations by:
 
-1. Splitting BAM files by cell type and chromosome
-2. Counting bases at each genomic position
-3. Calling variants using statistical methods
-4. Filtering out germline variants and technical artifacts
-5. Genotyping individual cells for identified variants
+1. Counting bases per cell type at each genomic position, in one pass over the original BAM
+   (`scripts/CellTypeBaseCounter.py`; no cell-type-specific BAMs are written)
+2. Calling variants using statistical methods (SComatic step 1 and 2)
+3. Filtering out technical artifacts and germline variants
+4. Genotyping individual cells for identified variants (once per sample and chromosome, on the original BAM)
+
+### Single-pass counting
+
+Earlier versions split each BAM into cell-type BAMs (`split_by_celltype-parallel.py`), indexed them,
+ran SComatic's `BaseCellCounter.py` once per cell type and merged the results. Rule
+`celltype_base_counts` replaces those four steps and writes the same merged table
+(`results/merged_counts/{sample}_{chrom}_AllCellTypes.tsv`), so the calling steps are unchanged.
+Per cell type it applies BaseCellCounter's counting rules exactly. On a test sample
+(chr1:1-30 Mb, 402k reads, 4 CPUs) it took 49 s against 1,491 s for the split route.
+
+Two deliberate differences from the split route:
+
+* `min_total_alt: 1` skips sites where no read carries a non-reference allele. Step 1 rows and
+  step 2 output were identical with and without it; it only changes step 1's
+  `*.coverage_cell_count.report.tsv`. Set it to 0 if you need that report.
+* No depth cap. The split route capped each cell-type BAM at 8000 reads per site
+  (SComatic's default), which dropped reads at very highly expressed genes such as RPL3 and RPL11.
+
+Cell-type BAMs can still be made for viewing (e.g. in IGV) with the optional `all_split_bams` target.
+`split_by_celltype-parallel.py` was fixed at the same time: it was writing reads that cross a
+chunk boundary twice, and its per-read pandas barcode lookup made it very slow.
 
 ## Requirements
 
@@ -91,7 +112,15 @@ batch_column: "batch"   # Column name in sra_metadata containing batch info
 # Cell types to analyze (comma-separated, no spaces)
 celltypes: "B,CD4,CD8,Monocytes,NK"  # Customize for your data
 
-# Parallel processing
+# Chromosomes to analyse (default chr1-chr22 + chrM)
+chroms: ["chr1", "chr2", ...]
+
+# Single-pass counting
+min_bq: 30           # minimum base quality
+min_total_alt: 1     # 0 keeps every site (only needed for step 1's coverage report)
+counter_threads: 8   # processes per sample x chromosome job
+
+# Only for the optional all_split_bams target
 window: 5000000  # Genomic chunk size for parallel BAM splitting (5Mb recommended)
 
 # SComatic filtering parameters (usually don't need to change)
@@ -105,7 +134,9 @@ fisher_cutoff: 0.001
 
 #### **Reference Files (Pre-configured):**
 
-These paths point to SComatic's reference files and typically don't need modification:
+These paths point to SComatic's reference files. They must be **uncompressed** (gunzip the `.gz`
+files shipped with SComatic): `BaseCellCalling.step2.py` opens them as plain text and silently
+skips the PoN / RNA-editing filters if it can't read them.
 
 ```yaml
 panel_of_normals: "/path/to/SComatic/PoNs/PoN.scRNAseq.hg38.tsv"
@@ -236,14 +267,22 @@ The pipeline creates the following output directories:
 
 ```
 results/
-├── split_bams/           # Cell-type and chromosome-specific BAM files
-├── base_counts/          # Base counts for each position
-├── merged_counts/        # Merged counts across cell types
-├── variant_calls/        # Initial variant calls
-├── filtered_calls/       # Filtered variant calls
+├── merged_counts/        # Base counts per cell type (one file per sample x chromosome)
+├── variant_calls/        # Initial variant calls (SComatic step 1)
+├── filtered_calls/       # Filtered variant calls (SComatic step 2)
 ├── qc_filtered/          # Quality-filtered variants
-├── genotyped/           # Single-cell genotypes
-└── germline/            # Final somatic variants (germline filtered)
+├── sample_meta/          # Per-sample barcode -> cell type tables used for genotyping
+├── genotyped_all/        # Single-cell genotypes, all cell types (one file per sample x chromosome)
+├── genotyped/            # Single-cell genotypes split by cell type
+├── germline/             # Final somatic variants (germline filtered)
+└── split_bams/           # Only with the optional all_split_bams target
+```
+
+To run everything except germline filtering (no R / Bioconductor environment needed), use the
+`all_genotyped` target:
+
+```bash
+snakemake -s snakemake.dir/snakefile --configfile snakemake.dir/config.yaml --cores 4 all_genotyped
 ```
 
 ### Key Output Files
@@ -286,7 +325,7 @@ Check specific log files for detailed error messages:
 ## Performance Optimization
 
 ### For Large Datasets:
-- Increase `window` size for fewer, larger parallel jobs
+- Increase `counter_threads` for the counting jobs (one job per sample x chromosome)
 - Adjust memory allocations based on your data size
 - Consider using faster storage for temporary files
 
