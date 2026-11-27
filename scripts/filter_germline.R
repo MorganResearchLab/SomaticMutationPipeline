@@ -37,7 +37,17 @@ system(paste0("ls -ls", opt$output))
 # add gene symbols to this
 txdb.hg38 <- TxDb.Hsapiens.UCSC.hg38.knownGene
 
-in.files <- list.files(opt$in_path, pattern=paste0(opt$sample, "_", opt$celltype), full.names=TRUE)
+# Match exactly <sample>_<celltype>_<chrom>.single_cell_genotype.tsv for this sample and
+# cell type. An unanchored "<sample>_<celltype>" pattern also matched other cell types that
+# share a prefix (e.g. NK -> NKT, NKhighresponse). Regex characters in the names are escaped,
+# and the chromosome part allows any contig name (chr1-22, chrX, chrM, ...).
+escape_regex <- function(s) gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", s)
+file.pattern <- paste0("^", escape_regex(opt$sample), "_", escape_regex(opt$celltype),
+                       "_[^_]+\\.single_cell_genotype\\.tsv$")
+in.files <- list.files(opt$in_path, pattern=file.pattern, full.names=TRUE)
+if(length(in.files) == 0){
+  stop(paste0("No genotype files matching ", file.pattern, " in ", opt$in_path))
+}
 in.df.list <- list()
 
 for(x in seq_along(in.files)){
@@ -45,13 +55,29 @@ for(x in seq_along(in.files)){
   x.bed.df <- x.bed.df[x.bed.df$Num_reads >= 2, , drop=FALSE]
   if(nrow(x.bed.df)){
     x.bed.df$ALT <- unlist(lapply(strsplit(x.bed.df$ALT_expected, split=",", fixed=TRUE), FUN=function(X) paste0(X[1])))
-    x.file <- unlist(lapply(strsplit(in.files[x], split="/"), FUN=function(FX) paste0(FX[length(FX)])))
-    x.samp <- gsub(x.file, pattern="(SRR[0-9]+)_(\\S*)(\\.single_cell_genotype\\.tsv)", replacement="\\1")
-    x.ct <- gsub(x.file, pattern="(SRR[0-9]+)_(\\S*)_(chr[0-9]+)(\\.single_cell_genotype\\.tsv)", replacement="\\2")
-    x.bed.df$CellType <- x.ct
-    x.bed.df$Sample <- x.samp
+    # Files are selected by exact sample and cell type above, so take both from the
+    # arguments (the old filename regexes assumed SRR IDs and numeric chromosomes).
+    x.bed.df$CellType <- opt$celltype
+    x.bed.df$Sample <- opt$sample
     in.df.list[[in.files[x]]] <- x.bed.df
   }
+}
+
+# Write a header-only output and stop without error. Used when a cell type has no
+# genotype rows with >= 2 reads, or when every candidate overlaps dbSNP (previously
+# the script crashed in dplyr::distinct / downstream and failed the Snakemake job).
+write_empty_and_quit <- function(reason) {
+  message(reason, " - writing header-only output to ", opt$output)
+  empty <- data.frame(seqnames=character(), start=integer(), end=integer(), width=integer(),
+                      strand=character(), REF=character(), ALT=character(), CellType=character(),
+                      Sample=character(), original_ref=character(), original_alt=character(),
+                      was_flipped=logical(), Mutation=character())
+  write.table(empty, file=opt$output, quote=FALSE, row.names=FALSE, sep="\t")
+  quit(save="no", status=0)
+}
+
+if(length(in.df.list) == 0){
+  write_empty_and_quit(paste0("No genotype rows with Num_reads >= 2 for ", opt$sample, " ", opt$celltype))
 }
 
 bed.df <- do.call(rbind.data.frame, in.df.list)
@@ -70,6 +96,9 @@ germline.snps <- snpsByOverlaps(SNPlocs.Hsapiens.dbSNP155.GRCh38, mut.bed)
 germline.snps
 
 not.germline <- mut.bed[!mut.bed %in% germline.snps]
+if(length(not.germline) == 0){
+  write_empty_and_quit(paste0("All ", length(mut.bed), " candidate sites overlap dbSNP for ", opt$sample, " ", opt$celltype))
+}
 seqlevelsStyle(not.germline) <- "UCSC"
 
 check_strand_consistency <- function(gr) {
