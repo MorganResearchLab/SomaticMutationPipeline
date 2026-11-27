@@ -56,6 +56,11 @@ def process_region(region, bamfile, outdir, metadata, cell_types, batch_id, batc
     logging_interval = 10000  # Log every 10,000 reads
     
     for x in inbam.fetch(region[0], region[1], region[2]):
+        # FIX: fetch() returns every read OVERLAPPING the chunk, so a read that
+        # crosses a chunk boundary was written twice. Keep it only in the chunk
+        # that contains its start.
+        if x.reference_start < region[1]:
+            continue
         count += 1
         try:
             cellbarcode = x.get_tag("CB")
@@ -70,13 +75,18 @@ def process_region(region, bamfile, outdir, metadata, cell_types, batch_id, batc
             else:
                 raise IOError(f"Batch position argument {batch_position} not recognised")
 
-            if not cellbarcode.endswith("-1"):
-                cb_id = cb_id.rstrip("-1")
-                
+            # FIX: rstrip("-1") strips any trailing '-' / '1' characters
+            # (e.g. "ACGT-2_S11" -> "ACGT-2_S"). Strip the literal suffix only
+            # (str.removesuffix needs Python 3.9; the SComatic env is 3.7).
+            if not cellbarcode.endswith("-1") and cb_id.endswith("-1"):
+                cb_id = cb_id[:-2]
+
             x.set_tag("CB", cb_id)
-            if metadata['Index'].isin([cb_id]).any():
+            # FIX: dict lookup (~20 ns) instead of two pandas scans of the whole
+            # metadata table per read (~3-9 ms).
+            celltype = metadata.get(cb_id)
+            if celltype is not None and celltype in temp_outputbam:
                 summ_dict["CB_matched"] += 1
-                celltype = metadata.loc[metadata['Index'] == cb_id, 'Cell_type'].values[0]
 
                 if count % logging_interval == 0:
                     elapsed = time.time() - start_time
@@ -168,7 +178,9 @@ def main():
     
     # Read metadata
     logging.info(f"Reading meta data file: {args.metafile}")
-    metadata = pd.read_csv(args.metafile, sep="\t")
+    md = pd.read_csv(args.metafile, sep="\t")
+    # FIX: barcode -> cell type dict, built once (and pickled once per task)
+    metadata = dict(zip(md['Index'], md['Cell_type']))
     logging.info(f"Loaded metadata with {len(metadata)} entries")
     
     # Open BAM to get header information

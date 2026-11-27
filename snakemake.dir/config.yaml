@@ -19,9 +19,22 @@ batch_column: ""
 # cell types comma separated list - NO SPACES
 celltypes: ""
 
+# chromosomes to analyse - list or comma separated string (default: chr1-chr22 + chrM)
+chroms: ["chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr10", "chr11",
+         "chr12", "chr13", "chr14", "chr15", "chr16", "chr17", "chr18", "chr19", "chr20", "chr21", "chr22", "chrM"]
+
+# single-pass cell type base counting (rule celltype_base_counts)
+min_bq: 30           # minimum base quality
+min_total_alt: 1     # skip sites with fewer alt reads than this over all reads (0 = keep all sites;
+                     # needed only for step1's coverage_cell_count report). Do not set above 1.
+counter_threads: 8   # processes per sample x chromosome job
+
 # genome chunk size for parallel BAM splitting - integer
+# (only used by the optional split_by_celltype rule / all_split_bams target)
 window: 0
 
+# NB: BaseCellCalling.step2.py opens these with open(), so they must be uncompressed
+# (gunzip the .gz files shipped with SComatic)
 panel_of_normals: "/path/to/SComatic/PoNs/PoN.scRNAseq.hg38.tsv"
 rna_editing_sites: "/path/to/SComatic/RNAediting/AllEditingSites.hg38.txt"
 

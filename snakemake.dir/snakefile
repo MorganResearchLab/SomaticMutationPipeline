@@ -30,10 +30,19 @@ import os
 from pathlib import Path
 import glob
 
-# Generate chromosome list (1-22)
-CHROMS = [f"chr{i}" for i in range(1, 23)]
-CHROMS.append("chrM")
+# Chromosomes to analyse: config "chroms" (list or comma-separated string),
+# default chr1-22 + chrM
+_chroms = config.get("chroms") or [f"chr{i}" for i in range(1, 23)] + ["chrM"]
+CHROMS = _chroms.split(",") if isinstance(_chroms, str) else list(_chroms)
 CELL_TYPES = config["celltypes"].split(",")
+
+# Pipeline scripts directory: config "src_dir", default <repo>/scripts
+SRC_DIR = config.get("src_dir") or os.path.join(workflow.basedir, "..", "scripts")
+
+# Single-pass counting options (see scripts/CellTypeBaseCounter.py)
+MIN_BQ = config.get("min_bq", 30)
+MIN_TOTAL_ALT = config.get("min_total_alt", 1)
+COUNTER_THREADS = config.get("counter_threads", 8)
 
 def get_samples_from_bams():
     bam_files = glob.glob(os.path.join(config["bam_dir"], "*.bam"))
@@ -60,8 +69,21 @@ rule all:
                chrom=CHROMS),
          "envs/biocfilter_setup_complete"
 
+# Everything up to per-cell genotypes (no germline filtering / R environment)
+rule all_genotyped:
+    input:
+        expand("results/genotyped/{sample}_{celltype}_{chrom}.single_cell_genotype.tsv",
+               sample=SAMPLES,
+               celltype=CELL_TYPES,
+               chrom=CHROMS)
 
-# Split BAM files by cell type and chromosome
+
+# ---------------------------------------------------------------------------
+# Optional: cell-type-specific BAMs (e.g. for viewing in IGV).
+# NOT used by the default pipeline any more: counting and genotyping now read
+# the original BAM directly (rules celltype_base_counts / genotype_cells).
+# Build them with:  snakemake ... all_split_bams
+# ---------------------------------------------------------------------------
 rule split_by_celltype:
     input:
         bam = os.path.join(config["bam_dir"], "{sample}.bam")
@@ -70,7 +92,7 @@ rule split_by_celltype:
                           celltype=CELL_TYPES)
     params:
         outdir = "results/split_bams/{sample}",
-        script = "scripts/split_by_celltype-parallel.py",
+        script = os.path.join(SRC_DIR, "split_by_celltype-parallel.py"),
         meta = config["cell_type_file"],
         sra_meta = config["sra_metadata"],
         celltypes = config["celltypes"],
@@ -85,12 +107,13 @@ rule split_by_celltype:
         cpus = 8
     conda:
         "envs/scomatic.yaml"
+    threads: 8
     log:
         "logs/split_bams/{sample}_{chrom}.log"
     shell:
-        """        
+        """
         mkdir -p {params.outdir}
-        
+
         python {params.script} \
             --bamfile {input.bam} \
             --outdir {params.outdir} \
@@ -98,7 +121,7 @@ rule split_by_celltype:
             --sra_meta {params.sra_meta} \
             --batch_pos {params.batch_pos} \
             --batch_column {params.batch_col} \
-	    --threads 8 \
+            --threads {threads} \
             --celltypes {params.celltypes} \
             --metafile {params.meta} \
             --chunk_size {params.window} \
@@ -132,68 +155,75 @@ rule index_split_bams:
         samtools index {input.bam} {output.bai} 2> {log}
         """
 
-# Base counter now requires both BAM and index
-rule base_counter:
+# ---------------------------------------------------------------------------
+# Single-pass, cell-type-aware base counting on the ORIGINAL BAM.
+# Replaces split_by_celltype -> index_split_bams -> base_counter (x cell types)
+# -> merge_base_counts. Output has the same name and format as
+# MergeBaseCellCounts.py, so variant_calls is unchanged.
+# ---------------------------------------------------------------------------
+
+# Index the original BAM (skipped if {sample}.bam.bai already exists and is newer)
+rule index_bam:
     input:
-        bam = "results/split_bams/{sample}/{sample}_{celltype}_{chrom}.bam",
-        bai = "results/split_bams/{sample}/{sample}_{celltype}_{chrom}.bam.bai"
+        bam = os.path.join(config["bam_dir"], "{sample}.bam")
     output:
-        counts = "results/base_counts/{sample}/{chrom}/{sample}_{celltype}_{chrom}.tsv"
-    params:
-        temp_dir = "results/temp/{sample}_{chrom}_{celltype}",
-        fasta = lambda wildcards: f"{config['ref_dir']}/{wildcards.chrom}.fa.gz",
-        sco_chrom = lambda wildcards: f"{wildcards.chrom}",
-        countdir = "results/base_counts/{sample}/{chrom}/"
+        bai = os.path.join(config["bam_dir"], "{sample}.bam.bai")
+    threads: 4
     resources:
-        mem_mb = 12000,
-        runtime = 2820,
+        mem_mb = 4000,
+        runtime = 180,
         partition = "uoa-compute",
-        cpus = 1
+        cpus = 4
     conda:
         "envs/scomatic.yaml"
     log:
-        "logs/base_counter/{sample}_{chrom}_{celltype}.log"
+        "logs/index_bam/{sample}.log"
     shell:
         """
-	touch {output.counts}
-        touch {params.countdir}
-        
-        mkdir -p {params.temp_dir}
-        python {config[scomatic_dir]}/scripts/BaseCellCounter/BaseCellCounter.py \
-            --bam {input.bam} \
-            --ref {params.fasta} \
-            --chrom {params.sco_chrom} \
-            --out_folder {params.countdir} \
-            --min_bq 30 \
-            --tmp_dir {params.temp_dir} \
-            --nprocs 1 \
-            2> {log}
-        
-        rm -rf {params.temp_dir}
+        samtools index -@ {threads} {input.bam} 2> {log}
         """
 
-# Merge base counts for each sample
-rule merge_base_counts:
+rule celltype_base_counts:
     input:
-        counts = expand("results/base_counts/{{sample}}/{{chrom}}/{{sample}}_{celltype}_{{chrom}}.tsv",
-                        celltype=CELL_TYPES)
+        bam = os.path.join(config["bam_dir"], "{sample}.bam"),
+        bai = os.path.join(config["bam_dir"], "{sample}.bam.bai")
     output:
         merged = "results/merged_counts/{sample}_{chrom}_AllCellTypes.tsv"
     params:
-        tsv_dir = "results/base_counts/{sample}/{chrom}/"
+        script = os.path.join(SRC_DIR, "CellTypeBaseCounter.py"),
+        fasta = lambda wildcards: f"{config['ref_dir']}/{wildcards.chrom}.fa.gz",
+        meta = config["cell_type_file"],
+        sra_meta = config["sra_metadata"],
+        celltypes = config["celltypes"],
+        batch_col = config["batch_column"],
+        batch_pos = config["batch_position"],
+        min_bq = MIN_BQ,
+        min_total_alt = MIN_TOTAL_ALT
+    threads: COUNTER_THREADS
     resources:
-        mem_mb = 12000,
-        runtime = 2820,
+        mem_mb = 8000,
+        runtime = 1440,
         partition = "uoa-compute",
-        cpus = 1
+        cpus_per_task = COUNTER_THREADS,
+        cpus = COUNTER_THREADS
     conda:
         "envs/scomatic.yaml"
     log:
-        "logs/merge_counts/{sample}_{chrom}.log"
+        "logs/celltype_base_counts/{sample}_{chrom}.log"
     shell:
-        """        
-        python {config[scomatic_dir]}/scripts/MergeCounts/MergeBaseCellCounts.py \
-            --tsv_folder {params.tsv_dir} \
+        """
+        python {params.script} \
+            --bam {input.bam} \
+            --ref {params.fasta} \
+            --chrom {wildcards.chrom} \
+            --meta {params.meta} \
+            --sra_meta {params.sra_meta} \
+            --batch_column {params.batch_col} \
+            --batch_pos {params.batch_pos} \
+            --celltypes {params.celltypes} \
+            --min_bq {params.min_bq} \
+            --min_total_alt {params.min_total_alt} \
+            --nprocs {threads} \
             --outfile {output.merged} \
             2> {log}
         """
@@ -290,38 +320,93 @@ rule qc_filter:
             awk -F "\t" '$1 ~ /^#/ || $6 == ""' > {output.filtered} 2> {log}
         """
 
-# Genotype cells for filtered variants
-rule genotype_cells:
+# Barcode -> cell type table matching the CB tags of the ORIGINAL BAM
+# (batch prefix/suffix removed), for SingleCellGenotype.py
+rule sample_meta:
     input:
-        vcf = "results/qc_filtered/{sample}_{chrom}.filtered.vcf",
-        bam = "results/split_bams/{sample}/{sample}_{celltype}_{chrom}.bam"
+        bam = os.path.join(config["bam_dir"], "{sample}.bam")
     output:
-        genotypes = "results/genotyped/{sample}_{celltype}_{chrom}.single_cell_genotype.tsv"
+        meta = "results/sample_meta/{sample}.meta.tsv"
     params:
-        temp_dir = "results/temp/genotype_{sample}_{celltype}_{chrom}",
-        ref = lambda wildcards: f"{config['ref_dir']}/{wildcards.chrom}.fa.gz"
+        script = os.path.join(SRC_DIR, "make_sample_meta.py"),
+        meta = config["cell_type_file"],
+        sra_meta = config["sra_metadata"],
+        celltypes = config["celltypes"],
+        batch_col = config["batch_column"],
+        batch_pos = config["batch_position"]
     resources:
-        mem_mb = 8000,
-        runtime = 600,
-        partition = "spot-compute",
+        mem_mb = 4000,
+        runtime = 30,
+        partition = "uoa-compute",
         cpus = 1
     conda:
         "envs/scomatic.yaml"
     log:
-        "logs/genotype_cells/{sample}_{celltype}_{chrom}.log"
+        "logs/sample_meta/{sample}.log"
+    shell:
+        """
+        python {params.script} \
+            --meta {params.meta} \
+            --bam {input.bam} \
+            --sra_meta {params.sra_meta} \
+            --batch_column {params.batch_col} \
+            --batch_pos {params.batch_pos} \
+            --celltypes {params.celltypes} \
+            --out {output.meta} \
+            2> {log}
+        """
+
+# Genotype all cells once per sample x chromosome on the original BAM, then
+# split by observed cell type (column 9) so filter_germline gets the same
+# per-cell-type files as before.
+# --max_dp: SingleCellGenotype caps pileup depth at 8000 by default (and pysam
+# treats 0 as that same cap). On the combined BAM the cap would be reached at
+# highly expressed genes, so pass a large number.
+rule genotype_cells:
+    input:
+        vcf = "results/qc_filtered/{sample}_{chrom}.filtered.vcf",
+        bam = os.path.join(config["bam_dir"], "{sample}.bam"),
+        bai = os.path.join(config["bam_dir"], "{sample}.bam.bai"),
+        meta = "results/sample_meta/{sample}.meta.tsv"
+    output:
+        all_cells = "results/genotyped_all/{sample}_{chrom}.single_cell_genotype.tsv",
+        genotypes = expand("results/genotyped/{{sample}}_{celltype}_{{chrom}}.single_cell_genotype.tsv",
+                           celltype=CELL_TYPES)
+    params:
+        temp_dir = "results/temp/genotype_{sample}_{chrom}",
+        ref = lambda wildcards: f"{config['ref_dir']}/{wildcards.chrom}.fa.gz",
+        celltypes = " ".join(CELL_TYPES),
+        outdir = "results/genotyped"
+    threads: 4
+    resources:
+        mem_mb = 8000,
+        runtime = 600,
+        partition = "spot-compute",
+        cpus_per_task = 4,
+        cpus = 4
+    conda:
+        "envs/scomatic.yaml"
+    log:
+        "logs/genotype_cells/{sample}_{chrom}.log"
     shell:
         """
         mkdir -p {params.temp_dir}
         python {config[scomatic_dir]}/scripts/SingleCellGenotype/SingleCellGenotype.py \
             --bam {input.bam} \
             --infile {input.vcf} \
-            --nprocs 1 \
-            --meta {config[cell_type_file]} \
-            --outfile {output.genotypes} \
+            --nprocs {threads} \
+            --max_dp 1000000000 \
+            --meta {input.meta} \
+            --outfile {output.all_cells} \
             --tmp_dir {params.temp_dir} \
             --ref {params.ref} \
             2> {log}
         rm -rf {params.temp_dir}
+
+        for ct in {params.celltypes}; do
+            awk -F '\t' -v ct="$ct" '$1 ~ /^#/ || $9 == ct' {output.all_cells} \
+                > {params.outdir}/{wildcards.sample}_${{ct}}_{wildcards.chrom}.single_cell_genotype.tsv
+        done
         """
 
 rule setup_biocfilter_env:

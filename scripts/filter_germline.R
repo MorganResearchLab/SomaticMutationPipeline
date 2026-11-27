@@ -1,17 +1,15 @@
 #! /usr/bin/env Rscript
 
 
+# Only the packages this script uses. The annotation packages it used to load
+# (VariantAnnotation, GenomicFeatures, BSgenome.Hsapiens.UCSC.hg38, org.Hs.eg.db,
+# Homo.sapiens, biomaRt, TxDb.Hsapiens.UCSC.hg38.knownGene, stringr) were never used
+# and added a lot of memory per job. The dbSNP lookup below reads the SNPlocs data files
+# directly, so SNPlocs/BSgenome are only loaded for the fallback.
 suppressPackageStartupMessages({
 library(dplyr)
-library(VariantAnnotation)
-library(GenomicFeatures)
 library(GenomicRanges)
-library(BSgenome.Hsapiens.UCSC.hg38)
-library(org.Hs.eg.db)
-library(Homo.sapiens)
-library(biomaRt)
-library(TxDb.Hsapiens.UCSC.hg38.knownGene)
-library(stringr)
+library(GenomeInfoDb)   # seqlevelsStyle()
 library(Biostrings)
 library(optparse)
 })
@@ -34,10 +32,17 @@ opt <- parse_args(parser)
 # file latency problems on Maxwell so add a quick file inspection step.
 system(paste0("ls -ls", opt$output))
 
-# add gene symbols to this
-txdb.hg38 <- TxDb.Hsapiens.UCSC.hg38.knownGene
-
-in.files <- list.files(opt$in_path, pattern=paste0(opt$sample, "_", opt$celltype), full.names=TRUE)
+# Match exactly <sample>_<celltype>_<chrom>.single_cell_genotype.tsv for this sample and
+# cell type. An unanchored "<sample>_<celltype>" pattern also matched other cell types that
+# share a prefix (e.g. NK -> NKT, NKhighresponse). Regex characters in the names are escaped,
+# and the chromosome part allows any contig name (chr1-22, chrX, chrM, ...).
+escape_regex <- function(s) gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", s)
+file.pattern <- paste0("^", escape_regex(opt$sample), "_", escape_regex(opt$celltype),
+                       "_[^_]+\\.single_cell_genotype\\.tsv$")
+in.files <- list.files(opt$in_path, pattern=file.pattern, full.names=TRUE)
+if(length(in.files) == 0){
+  stop(paste0("No genotype files matching ", file.pattern, " in ", opt$in_path))
+}
 in.df.list <- list()
 
 for(x in seq_along(in.files)){
@@ -45,13 +50,29 @@ for(x in seq_along(in.files)){
   x.bed.df <- x.bed.df[x.bed.df$Num_reads >= 2, , drop=FALSE]
   if(nrow(x.bed.df)){
     x.bed.df$ALT <- unlist(lapply(strsplit(x.bed.df$ALT_expected, split=",", fixed=TRUE), FUN=function(X) paste0(X[1])))
-    x.file <- unlist(lapply(strsplit(in.files[x], split="/"), FUN=function(FX) paste0(FX[length(FX)])))
-    x.samp <- gsub(x.file, pattern="(SRR[0-9]+)_(\\S*)(\\.single_cell_genotype\\.tsv)", replacement="\\1")
-    x.ct <- gsub(x.file, pattern="(SRR[0-9]+)_(\\S*)_(chr[0-9]+)(\\.single_cell_genotype\\.tsv)", replacement="\\2")
-    x.bed.df$CellType <- x.ct
-    x.bed.df$Sample <- x.samp
+    # Files are selected by exact sample and cell type above, so take both from the
+    # arguments (the old filename regexes assumed SRR IDs and numeric chromosomes).
+    x.bed.df$CellType <- opt$celltype
+    x.bed.df$Sample <- opt$sample
     in.df.list[[in.files[x]]] <- x.bed.df
   }
+}
+
+# Write a header-only output and stop without error. Used when a cell type has no
+# genotype rows with >= 2 reads, or when every candidate overlaps dbSNP (previously
+# the script crashed in dplyr::distinct / downstream and failed the Snakemake job).
+write_empty_and_quit <- function(reason) {
+  message(reason, " - writing header-only output to ", opt$output)
+  empty <- data.frame(seqnames=character(), start=integer(), end=integer(), width=integer(),
+                      strand=character(), REF=character(), ALT=character(), CellType=character(),
+                      Sample=character(), original_ref=character(), original_alt=character(),
+                      was_flipped=logical(), Mutation=character())
+  write.table(empty, file=opt$output, quote=FALSE, row.names=FALSE, sep="\t")
+  quit(save="no", status=0)
+}
+
+if(length(in.df.list) == 0){
+  write_empty_and_quit(paste0("No genotype rows with Num_reads >= 2 for ", opt$sample, " ", opt$celltype))
 }
 
 bed.df <- do.call(rbind.data.frame, in.df.list)
@@ -63,13 +84,49 @@ mut.bed <- makeGRangesFromDataFrame(bed.df, keep.extra.columns=TRUE, ignore.stra
 mut.bed <- unique(mut.bed)
 
 
-library(SNPlocs.Hsapiens.dbSNP155.GRCh38)
-# loop over somatic mutations and pull out which ones overlap with dbSNP entries.
-seqlevelsStyle(mut.bed) <- "NCBI"
-germline.snps <- snpsByOverlaps(SNPlocs.Hsapiens.dbSNP155.GRCh38, mut.bed)
-germline.snps
+# Flag candidate sites that are dbSNP155 positions.
+#
+# snpsByOverlaps() loads every dbSNP position on each chromosome it touches, even for one
+# query site (~3.8 GB peak for chr22; chr1 is ~5x larger). The SNPlocs package stores
+# dbSNP as an OnDiskLongTable: 4760 position-sorted batches of 200,000 SNPs, with
+# spatial_index.rds giving each batch's genomic range and c001/bNNNNN.rds its positions.
+# Reading only the batches that cover the candidate sites gives the same answer with a
+# few MB of memory. If the package layout is not as expected, fall back to snpsByOverlaps().
+#
+# A site counts as germline when it is a single base whose position is in dbSNP, which is
+# what the previous `mut.bed %in% snpsByOverlaps(...)` test did (exact range match against
+# 1-bp SNP positions, any allele).
+dbsnp_position_hits <- function(gr) {
+  d <- system.file("extdata", package="SNPlocs.Hsapiens.dbSNP155.GRCh38")
+  si.file <- file.path(d, "spatial_index.rds")
+  if(!nzchar(d) || !file.exists(si.file)) return(NULL)
+  si <- readRDS(si.file)
+  batch.file <- function(b) file.path(d, "c001", sprintf("b%05d.rds", b))
+  if(!file.exists(batch.file(length(si)))) return(NULL)
+  is.hit <- logical(length(gr))
+  ov <- findOverlaps(gr, si, ignore.strand=TRUE)
+  for(b in unique(subjectHits(ov))){
+    q <- unique(queryHits(ov)[subjectHits(ov) == b])
+    pos <- readRDS(batch.file(b))
+    is.hit[q] <- is.hit[q] | (start(gr)[q] %in% pos)
+  }
+  is.hit & width(gr) == 1L
+}
 
-not.germline <- mut.bed[!mut.bed %in% germline.snps]
+seqlevelsStyle(mut.bed) <- "NCBI"
+is.germline <- dbsnp_position_hits(mut.bed)
+if(is.null(is.germline)){
+  message("SNPlocs on-disk layout not recognised - falling back to snpsByOverlaps() (high memory)")
+  suppressPackageStartupMessages(library(SNPlocs.Hsapiens.dbSNP155.GRCh38))
+  germline.snps <- snpsByOverlaps(SNPlocs.Hsapiens.dbSNP155.GRCh38, mut.bed)
+  is.germline <- mut.bed %in% germline.snps
+}
+message(sum(is.germline), " of ", length(mut.bed), " candidate sites are dbSNP155 positions")
+
+not.germline <- mut.bed[!is.germline]
+if(length(not.germline) == 0){
+  write_empty_and_quit(paste0("All ", length(mut.bed), " candidate sites overlap dbSNP for ", opt$sample, " ", opt$celltype))
+}
 seqlevelsStyle(not.germline) <- "UCSC"
 
 check_strand_consistency <- function(gr) {
